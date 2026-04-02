@@ -1,0 +1,1109 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// =======================
+/// USER TYPES (IDENTITY)
+/// =======================
+/// Defines what a user IS, not what they can do.
+/// This is fixed and will not change dynamically.
+enum Role {
+  ADMIN
+  JOB_SEEKER
+  RECRUITER
+}
+
+/// =======================
+/// CORE USER MODEL
+/// =======================
+/// Handles authentication and basic identity information.
+/// Every person in the system exists here.
+model User {
+  id          String   @id @default(uuid())
+  firstName   String
+  middleName  String?
+  lastName    String
+  email       String   @unique
+  countryCode String
+  phoneNumber String   
+  password    String
+
+  /// Defines the type of user (Admin, Job Seeker, Recruiter)
+  roles UserRole[]
+
+  /// Optional profiles depending on userType
+  jobSeekerProfile JobSeeker?
+  recruiterProfile  RecruiterProfile?
+  adminProfile     AdminProfile?
+
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  statusChangedLogs RecruiterStatusLog[]
+  jobApplicationStatusLog JobApplicationStatusLog[]
+  userSubscription UserSubscription[]
+  subscriptionChargeHourly SubscriptionChargeHourly[]
+  invoices Invoice[]
+
+  /// Messaging
+  conversationsAsParticipantA Conversation[] @relation("ParticipantA")
+  conversationsAsParticipantB Conversation[] @relation("ParticipantB")
+  sentMessages               Message[]
+
+  /// Testimonial
+  testimonial Testimonial?
+
+  @@unique([countryCode, phoneNumber])
+}
+
+model UserRole {
+  userId String
+  role   Role
+
+  user User @relation(fields: [userId], references: [id])
+
+  assignedAt DateTime @default(now())
+  isActive   Boolean  @default(true)
+
+  @@id([userId, role])
+  @@index([role])
+}
+
+/// =======================
+/// JOB SEEKER PROFILE
+/// =======================
+model JobSeeker {
+  id String @id @default(uuid())
+
+  /// Relations
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// Many-to-many skills
+  skills JobSeekerSkill[]
+
+  /// One-to-many CV uploads
+  cvs JobSeekerCV[]
+  jobApplications JobApplication[]
+  savedJobs SavedJob[]
+
+  /// Profile data stored as JSON (previously in files on disk)
+  experience     Json?    // [{id, jobTitle, companyName, location, startDate, endDate, isCurrent, description}]
+  education      Json?    // [{id, institution, degree, fieldOfStudy, startDate, endDate, grade, description}]
+  certifications Json?    // [{id, name, issuingOrganization, issueDate, expiryDate, credentialId, description}]
+
+  /// CV extraction fields
+  summary        String?  @db.Text
+  languages      Json?    // [{name, proficiency}]
+  awards         Json?    // [{title, issuer, date, description}]
+  interests      Json?    // [string]
+
+  /// Visa & Work Permit status
+  hasVisa        Boolean  @default(false)
+  hasWorkPermit  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// =======================
+/// JOB SEEKER CV (UPLOADS)
+/// =======================
+model JobSeekerCV {
+  id String @id @default(uuid())
+
+  jobSeekerId String
+  jobSeeker   JobSeeker @relation(fields: [jobSeekerId], references: [id], onDelete: Cascade)
+
+  /// File storage info
+  filePath String
+  fileName String?
+  mimeType String?
+  fileSize Int?
+
+  /// Extracted CV text (optional, could be large)
+  extractedText String?
+
+  /// Cached structured extraction result (JSON)
+  extractedData Json?
+
+  /// Optional: tag this CV to an industry (recommended list/table)
+  industryId String?
+  industry   Industry? @relation(fields: [industryId], references: [id], onDelete: SetNull)
+
+  /// Notes about this CV (e.g. "Tailored for FinTech", "Senior version", etc.)
+  notes String?
+
+  /// Optional: mark which CV is the primary one
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  jobApplications JobApplication[]
+
+  @@index([jobSeekerId])
+  @@index([industryId])
+  @@index([isPrimary])
+}
+
+/// =======================
+/// SKILL
+/// =======================
+/// Represents a professional skill that can be
+/// associated with job seekers and job postings.
+/// Skills can optionally be categorized by industry.
+model Skill {
+  id String @id @default(uuid())
+  name String @unique
+
+  /// Industry this skill is commonly associated with
+  industries IndustrySkill[]
+
+  jobSeekers JobSeekerSkill[]
+  jobs JobSkill[]
+
+  createdAt DateTime @default(now())
+}
+
+
+/// =======================
+/// JOB SEEKER SKILL LINK
+/// =======================
+model JobSeekerSkill {
+  id          String      @id @default(uuid())
+  jobSeekerId String
+  jobSeeker   JobSeeker   @relation(fields: [jobSeekerId], references: [id])
+
+  skillId     String
+  skill       Skill       @relation(fields: [skillId], references: [id])
+
+  /// Optional proficiency level, e.g., Beginner, Intermediate, Expert
+  proficiency String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([jobSeekerId, skillId])
+}
+
+/// =======================
+/// RECRUITER PROFILE
+/// =======================
+/// Represents a person working for a company.
+model RecruiterProfile {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  /// Whether the recruiter is approved to post jobs
+  isApproved Boolean @default(false)
+
+  /// Overall status of the recruiter account
+  status RecruiterStatus @default(PENDING)
+
+  /// Roles for this recruiter within the company context
+  recruiterRoles RecruiterRole[]
+
+  /// Status change history
+  statusLogs RecruiterStatusLog[]
+
+  jobs Job[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// =======================
+/// RECRUITER ROLES
+/// =======================
+/// Roles a recruiter can have within a company
+enum RecruiterRoleEnum {
+  ADMIN  
+  STAFF   
+  VIEWER 
+}
+
+/// =======================
+/// RECRUITER STATUS
+/// =======================
+enum RecruiterStatus {
+  PENDING    // Just signed up, awaiting approval
+  ACTIVE     // Approved and can post jobs
+  SUSPENDED  // Suspended by admin
+  DEACTIVATED // Optional: removed from system
+}
+
+/// =======================
+/// RECRUITER STATUS LOG
+/// =======================
+/// Tracks every status change for a recruiter
+model RecruiterStatusLog {
+  id String @id @default(uuid())
+
+  recruiterId String
+  recruiter   RecruiterProfile @relation(fields: [recruiterId], references: [id])
+
+  oldStatus RecruiterStatus
+  newStatus RecruiterStatus
+
+  changedById String? 
+  changedBy   User? @relation(fields: [changedById], references: [id])
+
+  reason String? 
+  createdAt DateTime @default(now())
+}
+
+
+model RecruiterRole {
+  id String @id @default(uuid())
+  profileId String
+  profile   RecruiterProfile @relation(fields: [profileId], references: [id])
+  role RecruiterRoleEnum
+
+  /// list of permissions this role has
+  permissions Json @default("[]") // e.g., ["CREATE_JOB", "EDIT_JOB", "VIEW_APPLICATIONS"]
+
+  assignedAt DateTime @default(now())
+  isActive Boolean @default(true)
+
+  @@unique([profileId, role])
+  @@index([role])
+}
+
+
+/// =======================
+/// COMPANY
+/// =======================
+/// Represents an organization that posts jobs.
+/// A company can have multiple employer users and job vacancies.
+model Company {
+  id                 String   @id @default(uuid())
+  name               String
+  registrationNumber String   @unique
+
+  industries CompanyIndustry[]
+
+  website     String?
+  address     String?
+  country     String?
+  isVerified  Boolean  @default(false)
+
+  /// Employer users belonging to this company
+  users RecruiterProfile[]
+
+  /// Jobs posted by this company
+  jobs Job[]
+
+  createdAt DateTime @default(now())
+}
+
+/// =======================
+/// INDUSTRY
+/// =======================
+/// Represents a business industry category.
+/// Used to classify companies (and optionally jobs).
+/// Helps with filtering, analytics, and data consistency.
+model Industry {
+  id String @id @default(uuid())
+
+  /// Human-readable industry name (e.g. Information Technology)
+  name String @unique
+
+  /// URL-friendly identifier (e.g. information-technology)
+  slug String @unique
+
+  skills IndustrySkill[]
+  jobIndustries JobIndustry[]
+  JobSeekerCV JobSeekerCV[]
+  
+  /// Sort priority: 1 = taxonomy (shown first), 0 = other
+  priority Int @default(0)
+
+  isActive Boolean @default(true)
+  companies CompanyIndustry[]
+  createdAt DateTime @default(now())
+}
+
+model IndustrySkill {
+  industryId String
+  skillId    String
+
+  industry Industry @relation(fields: [industryId], references: [id], onDelete: Cascade)
+  skill    Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([industryId, skillId])
+  @@index([skillId])
+}
+
+model CompanyIndustry {
+  companyId  String
+  industryId String
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  industry Industry @relation(fields: [industryId], references: [id])
+
+  @@id([companyId, industryId])
+}
+
+/// =======================
+/// JOB VACANCY
+/// =======================
+/// Represents an open job position posted by a company.
+model Job {
+  id String @id @default(uuid())
+
+  title       String
+  description String
+
+  /// Hiring details
+  vacancies Int @default(1)
+  maxApplicants Int? // null = unlimited, otherwise enforce cap
+
+  employmentType EmploymentType
+  experienceLevel String? // e.g. Junior, Mid, Senior
+
+  /// Location (structured)
+  locationName String?   // e.g. "Nairobi, Westlands"
+  latitude     Float?
+  longitude    Float?
+  isRemote     Boolean @default(false)
+
+  /// Compensation (optional)
+  minSalary   Int?
+  maxSalary   Int?
+  currency    String? // e.g. KES, USD
+  showSalary  Boolean @default(false)
+
+  /// Status & control
+  status JobStatus @default(DRAFT)
+
+  /// Ownership
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  recruiterProfileId String
+  recruiterProfile   RecruiterProfile @relation(fields: [recruiterProfileId], references: [id])
+
+  industries JobIndustry[]
+
+  /// Skills required for this job (many-to-many)
+  skills JobSkill[]
+
+  /// Feed integration fields
+  externalId     String?    @unique
+  applicationUrl String?
+  source         JobSource  @default(PLATFORM)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  publishedAt DateTime?
+  jobApplications JobApplication[]
+  saves SavedJob[]
+  aiRankingCache AIRankingCache?
+
+  @@index([companyId])
+  @@index([status])
+  @@index([recruiterProfileId])
+  @@index([source])
+}
+
+enum JobStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  TEMPORARY
+}
+
+enum JobSource {
+  PLATFORM
+  FEED
+}
+
+/// =======================
+/// JOB APPLICATION
+/// =======================
+/// A job seeker applies for a job.
+/// Prevent duplicates with @@unique([jobId, jobSeekerId])
+model JobApplication {
+  id          String   @id @default(uuid())
+
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id])
+
+  jobSeekerId String
+  jobSeeker   JobSeeker @relation(fields: [jobSeekerId], references: [id])
+
+  /// Optional: which CV was used to apply
+  cvId        String?
+  cv          JobSeekerCV? @relation(fields: [cvId], references: [id])
+
+  /// Optional cover letter / message
+  coverLetter String?
+
+  /// Application status
+  status      ApplicationStatus @default(SUBMITTED)
+  statusLogs  JobApplicationStatusLog[]
+
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([jobId, jobSeekerId])
+  @@index([jobId])
+  @@index([jobSeekerId])
+  @@index([status])
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  REVIEWING
+  SHORTLISTED
+  REJECTED
+  WITHDRAWN
+  HIRED
+}
+
+model JobApplicationStatusLog {
+  id               String             @id @default(uuid())
+
+  jobApplicationId String
+  jobApplication   JobApplication     @relation(fields: [jobApplicationId], references: [id], onDelete: Cascade)
+
+  fromStatus       ApplicationStatus?
+  toStatus         ApplicationStatus
+
+  changedByUserId  String?
+  changedByUser    User?              @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  // optional reason / note
+  note             String?
+
+  createdAt        DateTime @default(now())
+
+  @@index([jobApplicationId])
+  @@index([toStatus])
+  @@index([createdAt])
+}
+
+model SavedJob {
+  id          String   @id @default(uuid())
+
+  jobSeekerId String
+  jobSeeker   JobSeeker @relation(fields: [jobSeekerId], references: [id], onDelete: Cascade)
+
+  jobId       String
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  // when job was saved
+  savedAt     DateTime  @default(now())
+
+  // optional note by user
+  note        String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // prevent duplicate saves
+  @@unique([jobSeekerId, jobId])
+
+  @@index([jobSeekerId, savedAt])
+  @@index([jobId])
+}
+
+/// =======================
+/// JOB ↔ INDUSTRY LINK
+/// =======================
+model JobIndustry {
+  jobId      String
+  industryId String
+
+  job      Job      @relation(fields: [jobId], references: [id])
+  industry Industry @relation(fields: [industryId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@id([jobId, industryId])
+  @@index([industryId])
+}
+
+/// =======================
+/// JOB SKILL LINK
+/// =======================
+model JobSkill {
+  id     String @id @default(uuid())
+  jobId  String
+  job    Job    @relation(fields: [jobId], references: [id])
+
+  skillId String
+  skill   Skill  @relation(fields: [skillId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, skillId])
+}
+
+/// =======================
+/// ADMIN PROFILE
+/// =======================
+/// Extra data for admin users.
+/// Only users with userType = ADMIN should have this.
+model AdminProfile {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  roleId String
+  role   AdminRole @relation(fields: [roleId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+/// =======================
+/// ADMIN ROLES
+/// =======================
+/// Permission bundles for admins.
+/// Example roles: SUPER_ADMIN, SYSTEM_MANAGER, REVIEWER
+model AdminRole {
+  id          String @id @default(uuid())
+  name        String @unique
+  description String?
+
+  admins AdminProfile[]
+}
+
+
+/// ====================
+/// SUBSCRIPTIONS
+/// ====================
+
+/// Who a plan is meant for
+enum SubscriptionUserType {
+  JOB_SEEKER
+  RECRUITER
+}
+
+/// Billing cycle of a plan
+enum BillingInterval {
+  MONTH
+  YEAR
+}
+
+model SubscriptionPlan {
+  id        String               @id @default(uuid())
+
+  /// e.g. "Silver", "Gold", "Platinum"
+  name      String
+
+  /// who this plan is for
+  userType  SubscriptionUserType
+
+  /// price for the full interval (MONTH/YEAR)
+  /// store money as Int (smallest unit) to avoid float rounding bugs
+  amount    Int
+  currency  String               @default("USD")
+  interval  BillingInterval      @default(MONTH)
+
+  isActive  Boolean              @default(true)
+
+  /// relations
+  subscriptions UserSubscription[]
+  feature       SubscriptionFeature?
+
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  /// prevent duplicates like 2 recruiter gold monthly plans
+  @@unique([name, userType, currency, interval])
+  @@index([userType, isActive])
+}
+
+/// Current lifecycle state of a user's subscription
+enum SubscriptionStatus {
+  PENDING    /// created but not paid/confirmed yet
+  ACTIVE
+  EXPIRED
+  FAILED
+  CANCELED
+}
+
+model UserSubscription {
+  id        String             @id @default(uuid())
+
+  userId    String
+  planId    String
+
+  /// subscription belongs to a user
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// subscription points to the plan chosen
+  plan      SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  status    SubscriptionStatus @default(PENDING)
+
+  /// when it became active
+  startedAt DateTime?
+
+  /// when it ends (end of paid period)
+  expiresAt DateTime?
+
+  canceledAt DateTime?
+
+  /// internal or gateway ref for reconciliation (optional)
+  reference String?            @unique
+
+  /// relations
+  charges   SubscriptionChargeHourly[]
+  payments  SubscriptionPayment[]
+  invoices  Invoice[]
+  creditedInvoices Invoice[] @relation("InvoiceCreditFromSub")
+  invoiceItems  InvoiceItem[]
+
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@index([userId, status])
+  @@index([planId])
+}
+
+/// Hourly proration ledger (money-based, like DigitalOcean-style metering)
+model SubscriptionChargeHourly {
+  id             String   @id @default(uuid())
+
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subscriptionId String
+  subscription   UserSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  /// hour bucket start time (truncate minutes/seconds to 00:00)
+  hourStart      DateTime
+
+  currency       String   @default("USD")
+
+  /// amount charged for that hour (Int smallest unit)
+  amount         Int
+
+  /// snapshots for audit (plan might change later)
+  planName       String
+  planAmount     Int
+  interval       BillingInterval
+
+  /// invoice linkage (optional until billed/finalized)
+  invoiceId      String?
+  invoice        Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  /// item linkage (optional; useful if you want traceability from item -> hours)
+  invoiceItemId  String?
+  invoiceItem    InvoiceItem? @relation(fields: [invoiceItemId], references: [id], onDelete: SetNull)
+
+  /// flags for invoicing workflow
+  isInvoiced     Boolean  @default(false)
+  invoicedAt     DateTime?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  /// one charge row per subscription per hour
+  @@unique([subscriptionId, hourStart])
+
+  @@index([userId, hourStart])
+  @@index([subscriptionId, isInvoiced])
+  @@index([invoiceId])
+  @@index([invoiceItemId])
+}
+
+/// ====================
+/// PAYMENTS
+/// ====================
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+/// Records payment attempts/results (usually against an invoice)
+model SubscriptionPayment {
+  id              String        @id @default(uuid())
+
+  subscriptionId  String
+  subscription    UserSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  /// if every payment must be tied to an invoice, keep required
+  /// if you sometimes pay then later invoice, make it String?
+  invoiceId String?
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  amount          Int
+  currency        String        @default("USD")
+  status          PaymentStatus @default(PENDING)
+
+  /// gateway mapping
+  gateway         String?       /// "MPESA", "CARD", ...
+  gatewayRef      String?       @unique
+  paidAt          DateTime?
+
+  gatewayLogs     Json[]        @default([])
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([subscriptionId, status])
+  @@index([invoiceId, status])
+}
+
+/// ====================
+/// FEATURES
+/// ====================
+
+/// Features attached to a plan (stored as JSON, but with a strict expected shape)
+model SubscriptionFeature {
+  id        String           @id @default(uuid())
+
+  planId    String           @unique
+  plan      SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  /**
+   * JSON STRUCTURE (recommended):
+   * {
+   *   "version": 1,
+   *   "jobSeeker": {
+   *     "limits": {
+   *       "savedJobs": 25,                 // -1 = unlimited
+   *       "aiCoverLettersPerMonth": 0      // -1 = unlimited
+   *     },
+   *     "access": {
+   *       "exclusiveListings": false,
+   *       "earlyAccessListings": false
+   *     },
+   *     "ai": {
+   *       "matchScoreMode": "BASIC",       // BASIC | DEEP | PRIORITY
+   *       "skillGapAnalysis": false,
+   *       "cvBuilder": {
+   *         "mode": "STANDARD",            // STANDARD | PREMIUM | ATS_AI
+   *         "templates": 1                 // -1 = all templates
+   *       },
+   *       "coverLetters": {
+   *         "enabled": false,
+   *         "mode": "NONE"                 // NONE | LIMITED | UNLIMITED
+   *       }
+   *     },
+   *     "search": {
+   *       "filters": "BASIC",              // BASIC | ADVANCED
+   *       "jobAlerts": false,
+   *       "earlyAccess": false
+   *     },
+   *     "visibility": {
+   *       "tier": "STANDARD"               // STANDARD | HIGH | VIP
+   *     },
+   *     "support": {
+   *       "channels": ["EMAIL"],           // EMAIL | CHAT | PHONE | SESSION
+   *       "priority": true
+   *     },
+   *     "applications": {
+   *       "applyMode": "STANDARD",         // STANDARD | ONE_CLICK | ONE_CLICK_AUTOFILL
+   *       "autoFill": false
+   *     },
+   *     "insights": {
+   *       "dubaiMarketInsights": false
+   *     }
+   *   },
+   *   "ui": {
+   *     "highlights": [
+   *       "25 Saved Jobs",
+   *       "Basic Compatibility",
+   *       "Priority Email Support"
+   *     ]
+   *   }
+   * }
+   */
+  features  Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// ====================
+/// INVOICES
+/// ====================
+
+enum InvoiceStatus {
+  DRAFT      /// accumulating hourly charges
+  OPEN       /// finalized, ready to pay
+  PAID
+  VOID
+}
+
+enum InvoiceCreditReason {
+  PRORATION_UNUSED_TIME
+  MANUAL_ADJUSTMENT
+}
+
+model Invoice {
+  id          String        @id @default(uuid())
+
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  userSubscriptionId        String?
+  userSubscription          UserSubscription?         @relation(fields: [userSubscriptionId], references: [id], onDelete: Cascade)
+
+  currency    String        @default("USD")
+
+  /// the metering window for this invoice (e.g. month start/end)
+  periodStart DateTime
+  periodEnd   DateTime
+
+  status      InvoiceStatus @default(DRAFT)
+
+  /// totals (smallest unit)
+  subtotal    Int           @default(0)
+  tax         Int           @default(0)
+  total       Int           @default(0)
+
+  /// payment reconciliation
+  reference   String?       @unique
+  paidAt      DateTime?
+
+  // proration/credit linkage
+  creditFromSubscriptionId  String?
+  creditFromSubscription    UserSubscription?        @relation("InvoiceCreditFromSub", fields: [creditFromSubscriptionId], references: [id], onDelete: SetNull)
+
+  creditAmount Int @default(0) // store as positive value in minor units
+  creditReason InvoiceCreditReason?
+  creditMeta   Json?
+
+  /// relations
+  items       InvoiceItem[]
+  charges     SubscriptionChargeHourly[]
+  payments    SubscriptionPayment[]
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  /// one invoice per user per period (prevents duplicates)
+  @@unique([userId, periodStart, periodEnd])
+
+  @@index([userId, status])
+  @@index([periodStart, periodEnd])
+}
+
+model InvoiceItem {
+  id             String   @id @default(uuid())
+
+  invoiceId       String
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  /// group by subscription + plan (Silver / Gold etc.)
+  subscriptionId  String
+  subscription    UserSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  /// plan snapshot for the grouped item
+  planName        String
+  interval        BillingInterval
+
+  /// how many hourly rows contributed (summary)
+  hours           Int      @default(0)
+
+  /// optional: store rate snapshot (per-hour) if you calculate it
+  unitRate        Int?
+
+  amount          Int
+  currency        String   @default("USD")
+
+  createdAt       DateTime @default(now())
+
+  subscriptionHourlyCharges SubscriptionChargeHourly[]
+
+  /// prevent duplicate items for same plan chunk in same invoice
+  @@unique([invoiceId, subscriptionId, planName, interval])
+
+  @@index([invoiceId, subscriptionId])
+  @@index([planName])
+}
+
+/// =======================
+/// MESSAGING SYSTEM
+/// =======================
+
+/// A conversation thread between two users (recruiter↔jobseeker, admin↔recruiter, admin↔jobseeker)
+model Conversation {
+  id String @id @default(uuid())
+
+  /// The two participants
+  participantAId String
+  participantA   User   @relation("ParticipantA", fields: [participantAId], references: [id], onDelete: Cascade)
+
+  participantBId String
+  participantB   User   @relation("ParticipantB", fields: [participantBId], references: [id], onDelete: Cascade)
+
+  /// Optional: link conversation to a job for context
+  jobId String?
+
+  /// Last message preview for listing
+  lastMessageText String?
+  lastMessageAt   DateTime?
+
+  /// Unread counters per participant
+  unreadCountA Int @default(0)
+  unreadCountB Int @default(0)
+
+  messages Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Prevent duplicate conversations between same pair
+  @@unique([participantAId, participantBId])
+  @@index([participantAId, lastMessageAt])
+  @@index([participantBId, lastMessageAt])
+}
+
+/// Individual message in a conversation
+model Message {
+  id String @id @default(uuid())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  /// Text-only content (no file attachments)
+  body String @db.Text
+
+  /// Whether contact info was stripped from this message
+  contactInfoStripped Boolean @default(false)
+
+  isRead Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+/// =======================
+/// AI RANKING CACHE
+/// =======================
+/// Caches AI ranking results per job to avoid re-computation.
+/// Each record stores the full ranked list for one job at a point in time.
+model AIRankingCache {
+  id        String   @id @default(uuid())
+
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  /// Number of applicants that were ranked
+  applicantCount Int
+
+  /// Full JSON result from rankCandidates (rankings array + summary)
+  rankingsJson Json
+
+  /// When the ranking was computed
+  rankedAt  DateTime @default(now())
+
+  /// Auto-invalidate after this time (set to rankedAt + TTL)
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@unique([jobId])
+  @@index([jobId])
+  @@index([expiresAt])
+}
+
+/// =======================
+/// TESTIMONIALS
+/// =======================
+model Testimonial {
+  id     String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "JOB_SEEKER" or "RECRUITER"
+  userType String
+
+  /// Star rating 1-5
+  rating Int @default(5)
+
+  /// Testimonial text
+  text String @db.Text
+
+  /// Role/title at the time of writing
+  role    String?
+  company String?
+
+  /// Approved by admin (only approved ones show on landing)
+  isApproved Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId])
+  @@index([userType, isApproved])
+}
+
+/// Landing page lead captures — visitors who upload CV before registering
+model LeadCapture {
+  id        String   @id @default(uuid())
+  fullName  String
+  email     String
+  phone     String?
+
+  /// Original filename of uploaded CV
+  cvFileName String?
+  /// CV file stored as binary
+  cvData     Bytes?
+  /// MIME type of the CV file
+  cvMimeType String?
+  /// Extracted text from the CV for matching
+  cvText     String? @db.Text
+
+  /// IP address of the submitter (for rate limiting)
+  ipAddress  String?
+
+  /// Admin notes
+  notes     String?  @db.Text
+
+  /// Whether admin has reviewed this lead
+  isReviewed Boolean @default(false)
+
+  /// Visa & Work Permit status
+  hasVisa        Boolean  @default(false)
+  hasWorkPermit  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([ipAddress])
+  @@index([isReviewed, createdAt])
+}
