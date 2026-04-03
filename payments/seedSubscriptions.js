@@ -435,6 +435,12 @@ async function seedRecruiterSubscriptions() {
     }
   }
 
+  // Deactivate old Silver/Gold/Platinum recruiter plans (legacy from TopDubaiJobs)
+  await prisma.subscriptionPlan.updateMany({
+    where: { userType, name: { in: ["Silver", "Gold", "Platinum"] } },
+    data: { isActive: false },
+  });
+
   const plans = [
     {
       name: "Free Trial",
