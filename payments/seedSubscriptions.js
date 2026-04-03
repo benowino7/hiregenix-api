@@ -516,8 +516,9 @@ async function seedRecruiterSubscriptions() {
     {
       name: "Diamond",
       amount: toCents(9900.0),
+      interval: "YEAR",
       features: {
-        labels: { tier: "Package 4 — Unlimited Job Postings" },
+        labels: { tier: "Unlimited Job Postings" },
         pricing: { yearlyPrice: "$9,900.00" },
         limits: { activeJobs: -1 },
         access: {
@@ -564,7 +565,7 @@ async function seedRecruiterSubscriptions() {
       } else {
         plan = await prisma.subscriptionPlan.update({
           where: { id: existing.id },
-          data: { amount: p.amount, interval, isActive: true },
+          data: { amount: p.amount, interval: p.interval || interval, isActive: true },
           select: { id: true, name: true },
         });
         console.log(`[RECRUITER] Updated plan: ${p.name}`);
@@ -576,7 +577,7 @@ async function seedRecruiterSubscriptions() {
           userType,
           amount: p.amount,
           currency,
-          interval,
+          interval: p.interval || interval,
           isActive: true,
         },
         select: { id: true, name: true },
