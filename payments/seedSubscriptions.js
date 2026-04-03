@@ -435,11 +435,26 @@ async function seedRecruiterSubscriptions() {
     }
   }
 
-  // Deactivate old Silver/Gold/Platinum recruiter plans (legacy from TopDubaiJobs)
+  // Deactivate legacy plans from TopDubaiJobs
   await prisma.subscriptionPlan.updateMany({
-    where: { userType, name: { in: ["Silver", "Gold", "Platinum"] } },
+    where: { userType, name: { endsWith: "(Legacy)" } },
     data: { isActive: false },
   });
+
+  // Rename Diamond plans to Silver/Gold/Platinum/Diamond
+  const planRenames = [
+    { from: "Diamond", to: "Silver" },
+    { from: "Diamond Compact", to: "Gold" },
+    { from: "Diamond Compact Plus", to: "Platinum" },
+    { from: "Diamond Unlimited", to: "Diamond" },
+  ];
+  for (const { from, to } of planRenames) {
+    const existing = await prisma.subscriptionPlan.findFirst({ where: { name: from, userType, isActive: true } });
+    if (existing) {
+      await prisma.subscriptionPlan.update({ where: { id: existing.id }, data: { name: to } });
+      console.log(`[RECRUITER] Renamed: ${from} -> ${to}`);
+    }
+  }
 
   const plans = [
     {
@@ -470,10 +485,10 @@ async function seedRecruiterSubscriptions() {
       },
     },
     {
-      name: "Diamond",
+      name: "Silver",
       amount: toCents(99.0),
       features: {
-        labels: { tier: "Package 1 — Single Job Posting" },
+        labels: { tier: "Single Job Posting" },
         pricing: { price: "$99.00" },
         limits: { activeJobs: 1 },
         access: {
@@ -491,7 +506,7 @@ async function seedRecruiterSubscriptions() {
       },
     },
     {
-      name: "Diamond Compact",
+      name: "Gold",
       amount: toCents(240.0),
       features: {
         labels: { tier: "Package 2 — Three (3) Job Postings" },
@@ -512,7 +527,7 @@ async function seedRecruiterSubscriptions() {
       },
     },
     {
-      name: "Diamond Compact Plus",
+      name: "Platinum",
       amount: toCents(350.0),
       features: {
         labels: { tier: "Package 3 — Five (5) Job Postings" },
@@ -533,7 +548,7 @@ async function seedRecruiterSubscriptions() {
       },
     },
     {
-      name: "Diamond Unlimited",
+      name: "Diamond",
       amount: toCents(9900.0),
       features: {
         labels: { tier: "Package 4 — Unlimited Job Postings" },
