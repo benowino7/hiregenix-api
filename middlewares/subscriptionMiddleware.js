@@ -17,7 +17,7 @@ const requireActiveJobSeekerSubscription = async (req, res, next) => {
 				canceledAt: null,
 				startedAt: { not: null },
 				OR: [{ expiresAt: { gt: now } }, { expiresAt: null }],
-				plan: { userType: "JOB_SEEKER", isActive: true },
+				plan: { userType: "JOB_SEEKER" },
 			},
 			orderBy: { expiresAt: "desc" },
 			select: {
@@ -142,7 +142,7 @@ const getSubscriptionInfo = async (req, res, next) => {
 				canceledAt: null,
 				startedAt: { not: null },
 				OR: [{ expiresAt: { gt: now } }, { expiresAt: null }],
-				plan: { userType: "JOB_SEEKER", isActive: true },
+				plan: { userType: "JOB_SEEKER" },
 			},
 			orderBy: { expiresAt: "desc" },
 			select: {
@@ -207,7 +207,7 @@ const requireActiveRecruiterSubscription = async (req, res, next) => {
 				canceledAt: null,
 				startedAt: { not: null },
 				OR: [{ expiresAt: { gt: now } }, { expiresAt: null }],
-				plan: { userType: "RECRUITER", isActive: true },
+				plan: { userType: "RECRUITER" },
 			},
 			orderBy: { expiresAt: "desc" },
 			select: {
