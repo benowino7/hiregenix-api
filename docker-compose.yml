@@ -23,7 +23,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://hiregenix:HireGeniXDB@2026@hiregenix_db:5432/hiregenix
       - PORT=6565
-      - JWT_SECRET=HireGeniXJWT@2026SecretKey#Prod
+      - JWT_SECRET=TopDubaiJWT@2026SecretKey#Prod
       - VIRTUAL_HOST=api.hiregenix.ai
       - VIRTUAL_PORT=6565
       - LETSENCRYPT_HOST=api.hiregenix.ai
