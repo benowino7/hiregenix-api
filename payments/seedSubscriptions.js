@@ -416,45 +416,11 @@ async function seedRecruiterSubscriptions() {
 
   const mode = (process.env.MODE || "upsert").toLowerCase();
 
-  // Rename old Diamond plans to new names
-  const renames = [
-    { from: "Diamond Single", to: "Diamond" },
-    { from: "Diamond Three", to: "Diamond Compact" },
-    { from: "Diamond Five", to: "Diamond Compact Plus" },
-  ];
-  for (const { from, to } of renames) {
-    const old = await prisma.subscriptionPlan.findFirst({
-      where: { name: from, userType, currency },
-    });
-    if (old) {
-      await prisma.subscriptionPlan.update({
-        where: { id: old.id },
-        data: { name: to },
-      });
-      console.log(`[RECRUITER] Renamed plan: ${from} -> ${to}`);
-    }
-  }
-
   // Deactivate legacy plans from TopDubaiJobs
   await prisma.subscriptionPlan.updateMany({
     where: { userType, name: { endsWith: "(Legacy)" } },
     data: { isActive: false },
   });
-
-  // Rename Diamond plans to Silver/Gold/Platinum/Diamond
-  const planRenames = [
-    { from: "Diamond", to: "Silver" },
-    { from: "Diamond Compact", to: "Gold" },
-    { from: "Diamond Compact Plus", to: "Platinum" },
-    { from: "Diamond Unlimited", to: "Diamond" },
-  ];
-  for (const { from, to } of planRenames) {
-    const existing = await prisma.subscriptionPlan.findFirst({ where: { name: from, userType, isActive: true } });
-    if (existing) {
-      await prisma.subscriptionPlan.update({ where: { id: existing.id }, data: { name: to } });
-      console.log(`[RECRUITER] Renamed: ${from} -> ${to}`);
-    }
-  }
 
   const plans = [
     {
