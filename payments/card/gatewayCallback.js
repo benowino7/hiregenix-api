@@ -3,8 +3,12 @@ const { prisma } = require("../../prisma");
 
 const addInterval = (startDate, interval) => {
 	const d = new Date(startDate);
-	if (interval === "YEAR") d.setFullYear(d.getFullYear() + 1);
-	else d.setMonth(d.getMonth() + 1);
+	switch (interval) {
+		case 'QUARTER': d.setMonth(d.getMonth() + 3); break;
+		case 'HALF_YEAR': d.setMonth(d.getMonth() + 6); break;
+		case 'YEAR': d.setFullYear(d.getFullYear() + 1); break;
+		default: d.setMonth(d.getMonth() + 1); break; // MONTH
+	}
 	return d;
 };
 

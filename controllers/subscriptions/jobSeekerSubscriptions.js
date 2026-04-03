@@ -5,8 +5,12 @@ const WiseFx = require("./wiseFx");
 // helper: add period based on plan interval
 const addInterval = (startDate, interval) => {
 	const d = new Date(startDate);
-	if (interval === "YEAR") d.setFullYear(d.getFullYear() + 1);
-	else d.setMonth(d.getMonth() + 1); // MONTH default
+	switch (interval) {
+		case 'QUARTER': d.setMonth(d.getMonth() + 3); break;
+		case 'HALF_YEAR': d.setMonth(d.getMonth() + 6); break;
+		case 'YEAR': d.setFullYear(d.getFullYear() + 1); break;
+		default: d.setMonth(d.getMonth() + 1); break; // MONTH
+	}
 	return d;
 };
 
@@ -73,9 +77,13 @@ const markSubscriptionAsFailed = async ({ subscriptionId, invoiceId, paymentId, 
 
 function planMonthlyValueMinor(plan) {
 	// normalize to "per month" (minor units)
-	if (plan.interval === "MONTH") return plan.amount;
-	if (plan.interval === "YEAR") return plan.amount / 12;
-	return plan.amount; // fallback
+	switch (plan.interval) {
+		case 'MONTH': return plan.amount;
+		case 'QUARTER': return plan.amount / 3;
+		case 'HALF_YEAR': return plan.amount / 6;
+		case 'YEAR': return plan.amount / 12;
+		default: return plan.amount;
+	}
 }
 
 function isDowngradePlan(newPlan, currentPlan) {
@@ -282,6 +290,21 @@ const chooseJobSeekerSubscription = async (req, res) => {
 				message: "Subscription plan not found (or not available for job seekers)",
 				result: {},
 			});
+		}
+
+		// Free trial is one-time only: reject if user has EVER had any subscription
+		if (plan.name === "Free Trial") {
+			const anyPriorSub = await prisma.userSubscription.findFirst({
+				where: { userId },
+				select: { id: true },
+			});
+			if (anyPriorSub) {
+				return res.status(400).json({
+					error: true,
+					message: "Free trial is one-time only",
+					result: {},
+				});
+			}
 		}
 
 		// after fetching `plan` and setting usedCurrency

@@ -10,9 +10,13 @@ const WiseFx = require("./wiseFx");
 // ── helpers (reused from job seeker, scoped to RECRUITER) ──
 
 function planMonthlyValueMinor(plan) {
-	if (plan.interval === "MONTH") return plan.amount;
-	if (plan.interval === "YEAR") return plan.amount / 12;
-	return plan.amount;
+	switch (plan.interval) {
+		case 'MONTH': return plan.amount;
+		case 'QUARTER': return plan.amount / 3;
+		case 'HALF_YEAR': return plan.amount / 6;
+		case 'YEAR': return plan.amount / 12;
+		default: return plan.amount;
+	}
 }
 
 function isDowngradePlan(newPlan, currentPlan) {

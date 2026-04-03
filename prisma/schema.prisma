@@ -611,6 +611,8 @@ enum SubscriptionUserType {
 /// Billing cycle of a plan
 enum BillingInterval {
   MONTH
+  QUARTER    // 3 months
+  HALF_YEAR  // 6 months
   YEAR
 }
 
