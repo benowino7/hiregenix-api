@@ -13,8 +13,10 @@ Router.get("/jobs/:id", getJobById);
 // subscriptions
 const { getSubscriptions } = require("../controllers/admin/subscriptions")
 const  { subscriptionGatewayCallback } = require("../payments/card/gatewayCallback")
+const  { paypalWebhook } = require("../payments/paypal/paypalWebhook")
 Router.get("/subscriptions", getSubscriptions)
 Router.post("/gateway/callback", subscriptionGatewayCallback)
+Router.post("/paypal/webhook", paypalWebhook)
 
 // Payment status check (polled by confirmation page)
 const { prisma } = require("../prisma");
