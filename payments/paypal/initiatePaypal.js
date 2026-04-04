@@ -82,10 +82,12 @@ const initiatePaypalPayment = async (req, res) => {
 				data: {
 					invoiceId: invoice.id,
 					subscriptionId: subscription.id,
-					description: `${plan.name} — ${plan.interval === "YEAR" ? "Annual" : plan.interval === "HALF_YEAR" ? "6 Month" : plan.interval === "QUARTER" ? "3 Month" : "Monthly"} Plan`,
-					quantity: 1,
-					unitAmount: plan.amount,
+					planName: plan.name,
+					interval: plan.interval,
+					hours: 0,
+					unitRate: null,
 					amount: plan.amount,
+					currency: plan.currency || "USD",
 				},
 			});
 
