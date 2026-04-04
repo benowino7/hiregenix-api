@@ -146,8 +146,9 @@ Router.post(
 Router.get("/subscriptions/latest", authenticate, getMyLatestSubscription);
 
 // PayPal payment initiation
-const { initiatePaypalPayment } = require("../payments/paypal/initiatePaypal");
+const { initiatePaypalPayment, cancelPaypalPayment } = require("../payments/paypal/initiatePaypal");
 Router.post("/subscriptions/paypal", authenticate, initiatePaypalPayment);
+Router.post("/subscriptions/paypal/cancel", authenticate, cancelPaypalPayment);
 Router.get("/subscriptions/upgrade-quote", authenticate, getUpgradeTopUpAmount);
 Router.get("/subscriptions/invoices", authenticate, getMyInvoices);
 Router.get("/subscriptions/invoices/:invoiceId", authenticate, getInvoiceById);

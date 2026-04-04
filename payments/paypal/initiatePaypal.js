@@ -176,4 +176,77 @@ const initiatePaypalPayment = async (req, res) => {
 	}
 };
 
-module.exports = { initiatePaypalPayment, PAYPAL_SUBSCRIPTION_PLANS };
+/**
+ * Cancel/Fail a PayPal payment when user cancels on PayPal's page.
+ * Called by frontend when user returns with ?paypal=cancelled&ref=xxx
+ */
+const cancelPaypalPayment = async (req, res) => {
+	try {
+		const userId = req.user?.userId;
+		if (!userId) return res.status(401).json({ error: true, message: "Unauthorized" });
+
+		const { reference, reason } = req.body;
+		if (!reference) return res.status(400).json({ error: true, message: "reference is required" });
+
+		// Find the invoice by reference, verify it belongs to this user
+		const invoice = await prisma.invoice.findFirst({
+			where: { reference, userId, status: "OPEN" },
+			select: { id: true, items: { select: { subscriptionId: true }, take: 1 } },
+		});
+
+		if (!invoice) {
+			return res.status(404).json({ error: true, message: "No pending payment found for this reference" });
+		}
+
+		const subscriptionId = invoice.items?.[0]?.subscriptionId;
+
+		const cancelLog = {
+			at: new Date().toISOString(),
+			type: "PAYPAL_CANCELLED",
+			reason: reason || "User cancelled on PayPal checkout page",
+			reference,
+		};
+
+		await prisma.$transaction(async (tx) => {
+			// Update payment record
+			const payment = await tx.subscriptionPayment.findFirst({
+				where: { invoiceId: invoice.id },
+				orderBy: { createdAt: "desc" },
+				select: { id: true },
+			});
+
+			if (payment) {
+				await tx.subscriptionPayment.update({
+					where: { id: payment.id },
+					data: { status: "FAILED", gatewayLogs: { push: cancelLog } },
+				});
+			}
+
+			// Void invoice
+			await tx.invoice.update({
+				where: { id: invoice.id },
+				data: { status: "VOID" },
+			});
+
+			// Fail subscription
+			if (subscriptionId) {
+				await tx.userSubscription.update({
+					where: { id: subscriptionId },
+					data: { status: "FAILED", canceledAt: new Date() },
+				});
+			}
+		});
+
+		console.log(`[PayPal] Cancelled: ref=${reference}, user=${userId}`);
+
+		return res.status(200).json({
+			error: false,
+			message: "Payment cancelled and recorded",
+		});
+	} catch (error) {
+		console.error("[PayPal Cancel] Error:", error.message);
+		return res.status(500).json({ error: true, message: error.message });
+	}
+};
+
+module.exports = { initiatePaypalPayment, cancelPaypalPayment, PAYPAL_SUBSCRIPTION_PLANS };
