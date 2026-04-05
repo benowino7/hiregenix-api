@@ -54,14 +54,35 @@ const initiatePaypalPayment = async (req, res) => {
 
 		const now = new Date();
 		const periodStart = now;
-		const periodEnd = addInterval(now, plan.interval);
 		const reference = `${userId}_${Date.now()}`;
+		const recurringPlanId = PAYPAL_SUBSCRIPTION_PLANS[plan.name];
+		const isInstallment = !!recurringPlanId; // Yearly plans use PayPal recurring = installments
+
+		// For installments: first period is 1 month, not full year
+		// For one-time: period matches the plan interval
+		const periodEnd = isInstallment
+			? addInterval(now, "MONTH") // First month only
+			: addInterval(now, plan.interval);
+
+		// Monthly installment amount (e.g. $9.95 for Silver yearly)
+		const monthlyAmount = isInstallment ? Math.round(plan.amount / 12) : null;
+		const firstPaymentAmount = isInstallment ? monthlyAmount : plan.amount;
 		const amountMajor = toMajorUnits(plan.amount);
+
+		// Installment metadata
+		const installmentMeta = isInstallment ? {
+			type: "INSTALLMENT",
+			totalInstallments: 12,
+			paidInstallments: 0, // Will be 1 after first payment
+			monthlyAmount,
+			yearlyTotal: plan.amount,
+			paypalSubscriptionId: null, // Set after PayPal creation
+		} : { type: "ONE_TIME" };
 
 		// Create PENDING subscription + invoice + payment in transaction
 		const created = await prisma.$transaction(async (tx) => {
 			const subscription = await tx.userSubscription.create({
-				data: { userId, planId: plan.id, status: "PENDING", reference },
+				data: { userId, planId: plan.id, status: "PENDING", reference, installmentMeta },
 			});
 
 			const invoice = await tx.invoice.create({
@@ -71,9 +92,9 @@ const initiatePaypalPayment = async (req, res) => {
 					periodStart,
 					periodEnd,
 					status: "OPEN",
-					subtotal: plan.amount,
+					subtotal: firstPaymentAmount,
 					tax: 0,
-					total: plan.amount,
+					total: firstPaymentAmount,
 					reference,
 				},
 			});
@@ -95,7 +116,7 @@ const initiatePaypalPayment = async (req, res) => {
 				data: {
 					subscriptionId: subscription.id,
 					invoiceId: invoice.id,
-					amount: plan.amount,
+					amount: firstPaymentAmount,
 					currency: plan.currency || "USD",
 					status: "PENDING",
 					gateway: "PAYPAL",
@@ -117,7 +138,6 @@ const initiatePaypalPayment = async (req, res) => {
 		const cancelUrl = `${baseUrl}/dashboard/subscriptions?paypal=cancelled&ref=${reference}`;
 
 		let paypalResult;
-		const recurringPlanId = PAYPAL_SUBSCRIPTION_PLANS[plan.name];
 
 		if (recurringPlanId) {
 			// Annual plans use PayPal Subscriptions API (recurring)
@@ -140,22 +160,33 @@ const initiatePaypalPayment = async (req, res) => {
 			});
 		}
 
-		// Store PayPal order/subscription ID in payment logs
+		// Store PayPal order/subscription ID in payment logs + installment meta
+		const paypalId = paypalResult.orderId || paypalResult.subscriptionId;
 		await prisma.subscriptionPayment.update({
 			where: { id: created.payment.id },
 			data: {
-				gatewayRef: paypalResult.orderId || paypalResult.subscriptionId,
+				gatewayRef: paypalId,
 				gatewayLogs: {
 					push: {
 						at: new Date().toISOString(),
 						type: "PAYPAL_CREATED",
-						paypalId: paypalResult.orderId || paypalResult.subscriptionId,
+						paypalId,
 						approveUrl: paypalResult.approveUrl,
-						isRecurring: !!recurringPlanId,
+						isRecurring: isInstallment,
 					},
 				},
 			},
 		});
+
+		// Update installment meta with PayPal subscription ID
+		if (isInstallment && paypalResult.subscriptionId) {
+			await prisma.userSubscription.update({
+				where: { id: created.subscription.id },
+				data: {
+					installmentMeta: { ...installmentMeta, paypalSubscriptionId: paypalResult.subscriptionId },
+				},
+			});
+		}
 
 		return res.status(200).json({
 			error: false,

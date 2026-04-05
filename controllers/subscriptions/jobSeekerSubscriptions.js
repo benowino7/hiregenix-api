@@ -704,6 +704,7 @@ const getMyLatestSubscription = async (req, res) => {
 				expiresAt: true,
 				canceledAt: true,
 				reference: true,
+				installmentMeta: true,
 				createdAt: true,
 				updatedAt: true,
 

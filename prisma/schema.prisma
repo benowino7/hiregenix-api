@@ -679,6 +679,10 @@ model UserSubscription {
   /// internal or gateway ref for reconciliation (optional)
   reference String?            @unique
 
+  /// installment tracking for yearly plans paid monthly
+  /// { type: "INSTALLMENT"|"ONE_TIME", totalInstallments: 12, paidInstallments: 3, monthlyAmount: 995, paypalSubscriptionId: "I-xxx" }
+  installmentMeta Json?
+
   /// relations
   charges   SubscriptionChargeHourly[]
   payments  SubscriptionPayment[]
