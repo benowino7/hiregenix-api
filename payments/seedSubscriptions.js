@@ -48,7 +48,20 @@ async function seedSubscriptions() {
         },
       },
     },
-    // ── Silver tier (3 durations) ──
+    // ── Silver tier (4 durations) ──
+    {
+      name: "Silver 1-Month",
+      amount: toCents(10.00),
+      interval: INTERVALS.MONTH,
+      features: {
+        labels: { tier: "Silver (Starter)" },
+        pricing: { price: "$10.00", duration: "1 month" },
+        limits: { savedJobs: 25, aiCoverLetters: 0 },
+        access: { jobAccess: "25 Saved Jobs", searchFilters: "Basic", visibility: "Standard", support: "Priority Email", applicationTool: "Standard Apply" },
+        ai: { matchScore: "Basic Compatibility", cvBuilder: "1 Standard Template", skillGapAnalysis: false, coverLetters: "Not Included" },
+        insights: { dubaiMarketInsights: false },
+      },
+    },
     {
       name: "Silver 3-Month",
       amount: toCents(29.95),
@@ -99,7 +112,7 @@ async function seedSubscriptions() {
     },
     {
       name: "Silver 1-Year",
-      amount: toCents(79.95),
+      amount: toCents(119.40),
       interval: INTERVALS.YEAR,
       features: {
         labels: { tier: "Silver (Starter)" },
@@ -121,7 +134,20 @@ async function seedSubscriptions() {
         insights: { dubaiMarketInsights: false },
       },
     },
-    // ── Gold tier (3 durations) ──
+    // ── Gold tier (4 durations) ──
+    {
+      name: "Gold 1-Month",
+      amount: toCents(20.00),
+      interval: INTERVALS.MONTH,
+      features: {
+        labels: { tier: "Gold (Popular)" },
+        pricing: { price: "$20.00", duration: "1 month" },
+        limits: { savedJobs: -1, aiCoverLetters: 0 },
+        access: { jobAccess: "Unlimited Saved Jobs", searchFilters: "Advanced + Alerts", visibility: "Enhanced", support: "Chat & Email", applicationTool: "One-Click Apply" },
+        ai: { matchScore: "Deep Skill Insight", cvBuilder: "All Premium Templates", skillGapAnalysis: true, coverLetters: "Not Included" },
+        insights: { dubaiMarketInsights: false },
+      },
+    },
     {
       name: "Gold 3-Month",
       amount: toCents(59.95),
@@ -172,7 +198,7 @@ async function seedSubscriptions() {
     },
     {
       name: "Gold 1-Year",
-      amount: toCents(159.95),
+      amount: toCents(239.40),
       interval: INTERVALS.YEAR,
       features: {
         labels: { tier: "Gold (Popular)" },
@@ -194,7 +220,20 @@ async function seedSubscriptions() {
         insights: { dubaiMarketInsights: false },
       },
     },
-    // ── Platinum tier (3 durations) ──
+    // ── Platinum tier (4 durations) ──
+    {
+      name: "Platinum 1-Month",
+      amount: toCents(30.00),
+      interval: INTERVALS.MONTH,
+      features: {
+        labels: { tier: "Platinum (Elite)" },
+        pricing: { price: "$30.00", duration: "1 month" },
+        limits: { savedJobs: -1, aiCoverLetters: -1 },
+        access: { jobAccess: "Unlimited Saved Jobs + Priority", searchFilters: "Advanced + Exclusive Listings", visibility: "Priority Visibility", support: "VIP Phone + 1-on-1 Session", applicationTool: "One-Click Apply + Priority" },
+        ai: { matchScore: "ATS-Optimized Scoring", cvBuilder: "All Premium + ATS Templates", skillGapAnalysis: true, coverLetters: "AI-Generated Unlimited" },
+        insights: { dubaiMarketInsights: "Full Access + Salary Data" },
+      },
+    },
     {
       name: "Platinum 3-Month",
       amount: toCents(89.95),
@@ -251,7 +290,7 @@ async function seedSubscriptions() {
     },
     {
       name: "Platinum 1-Year",
-      amount: toCents(233.95),
+      amount: toCents(359.40),
       interval: INTERVALS.YEAR,
       features: {
         labels: { tier: "Platinum (Elite)" },
