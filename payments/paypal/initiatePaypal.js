@@ -49,8 +49,9 @@ const initiatePaypalPayment = async (req, res) => {
 		const userId = req.user?.userId;
 		if (!userId) return res.status(401).json({ error: true, message: "Unauthorized" });
 
-		const { planId } = req.body;
+		const { planId, paymentType } = req.body; // paymentType: "INSTALLMENT" (default) or "ONE_TIME"
 		if (!planId) return res.status(400).json({ error: true, message: "planId is required" });
+		const isOneTime = paymentType === "ONE_TIME";
 
 		// Fetch plan
 		const plan = await prisma.subscriptionPlan.findUnique({
@@ -72,10 +73,10 @@ const initiatePaypalPayment = async (req, res) => {
 		const periodStart = now;
 		const reference = `${userId}_${Date.now()}`;
 		const recurringPlanId = PAYPAL_SUBSCRIPTION_PLANS[plan.name];
-		const isInstallment = !!recurringPlanId; // Yearly plans use PayPal recurring = installments
+		const isInstallment = !!recurringPlanId && !isOneTime; // Recurring unless user chose one-time
 
 		// For installments: first period is 1 month, not full year
-		// For one-time: period matches the plan interval
+		// For one-time: period matches the plan interval (full year)
 		const periodEnd = isInstallment
 			? addInterval(now, "MONTH") // First month only
 			: addInterval(now, plan.interval);
