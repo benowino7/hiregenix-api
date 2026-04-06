@@ -184,6 +184,51 @@ const startServer = async () => {
         }
       });
 
+      // Fail stale PENDING PayPal payments older than 2 hours — every 30 minutes
+      cron.schedule("*/30 * * * *", async () => {
+        try {
+          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+          // Find PENDING invoices older than 2 hours
+          const staleInvoices = await prisma.invoice.findMany({
+            where: {
+              status: "OPEN",
+              createdAt: { lte: twoHoursAgo },
+            },
+            select: { id: true, reference: true },
+          });
+
+          if (staleInvoices.length === 0) return;
+
+          const invoiceIds = staleInvoices.map(i => i.id);
+          const references = staleInvoices.map(i => i.reference).filter(Boolean);
+
+          // Void stale invoices
+          const invoiceResult = await prisma.invoice.updateMany({
+            where: { id: { in: invoiceIds }, status: "OPEN" },
+            data: { status: "VOID" },
+          });
+
+          // Fail associated PENDING payments
+          const paymentResult = await prisma.subscriptionPayment.updateMany({
+            where: { invoiceId: { in: invoiceIds }, status: "PENDING" },
+            data: { status: "FAILED" },
+          });
+
+          // Fail associated PENDING subscriptions
+          const subResult = await prisma.userSubscription.updateMany({
+            where: { reference: { in: references }, status: "PENDING" },
+            data: { status: "FAILED", canceledAt: new Date() },
+          });
+
+          if (invoiceResult.count > 0) {
+            console.log(`[CRON] Cleaned stale payments: ${invoiceResult.count} invoices voided, ${paymentResult.count} payments failed, ${subResult.count} subscriptions failed`);
+          }
+        } catch (err) {
+          console.error("[CRON] Stale payment cleanup failed:", err);
+        }
+      });
+
       // JobG8 feed sync — every hour
       cron.schedule("0 * * * *", () => {
         console.log("[CRON] Starting JobG8 feed sync...");
