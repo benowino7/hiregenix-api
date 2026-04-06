@@ -173,32 +173,39 @@ const paypalWebhook = async (req, res) => {
 			}
 
 			const meta = sub.installmentMeta || {};
-			const paidSoFar = (meta.paidInstallments || 0) + 1;
+			const totalInstallments = meta.totalInstallments || 12;
+			const currentPaid = meta.paidInstallments || 0;
+
+			// If this is payment beyond the current cycle (auto-renew), reset counter
+			const isNewCycle = currentPaid >= totalInstallments;
+			const paidSoFar = isNewCycle ? 1 : currentPaid + 1;
+			const cycleNumber = isNewCycle ? (meta.cycleNumber || 1) + 1 : (meta.cycleNumber || 1);
 			const now = new Date();
 
-			// Extend subscription by 1 month from current expiry (or now if expired)
+			// Extend subscription by 1 month from current expiry (or now if expired/grace)
 			const currentExpiry = sub.expiresAt && new Date(sub.expiresAt) > now ? new Date(sub.expiresAt) : now;
 			const newExpiry = addMonths(currentExpiry, 1);
 
 			await prisma.$transaction(async (tx) => {
-				// Update subscription: extend expiry, increment installment count
 				await tx.userSubscription.update({
 					where: { id: sub.id },
 					data: {
 						status: "ACTIVE",
 						startedAt: sub.status === "PENDING" ? now : undefined,
 						expiresAt: newExpiry,
+						canceledAt: null, // Clear any previous cancellation on successful payment
 						installmentMeta: {
 							...meta,
 							paidInstallments: paidSoFar,
+							totalInstallments,
+							cycleNumber,
 							lastPaymentAt: now.toISOString(),
 							lastPaypalTxnId: paypalTxnId,
+							...(isNewCycle ? { renewedAt: now.toISOString() } : {}),
 						},
 					},
 				});
 
-				// Create a payment record for this installment
-				// Find the original invoice to link
 				const invoice = sub.reference ? await tx.invoice.findFirst({ where: { reference: sub.reference }, select: { id: true } }) : null;
 
 				await tx.subscriptionPayment.create({
@@ -211,14 +218,12 @@ const paypalWebhook = async (req, res) => {
 						gateway: "PAYPAL",
 						gatewayRef: paypalTxnId,
 						paidAt: now,
-						gatewayLogs: [{ ...webhookLog, installment: paidSoFar, newExpiry: newExpiry.toISOString() }],
+						gatewayLogs: [{ ...webhookLog, installment: paidSoFar, cycle: cycleNumber, newExpiry: newExpiry.toISOString() }],
 					},
 				});
 
-				// Mark original invoice as PAID if still OPEN (first payment)
-				if (invoice && paidSoFar === 1) {
+				if (invoice && paidSoFar === 1 && cycleNumber === 1) {
 					await tx.invoice.update({ where: { id: invoice.id }, data: { status: "PAID", paidAt: now } });
-					// Expire previous active subscriptions
 					await tx.userSubscription.updateMany({
 						where: { userId: sub.userId, status: "ACTIVE", id: { not: sub.id } },
 						data: { status: "EXPIRED", expiresAt: now },
@@ -238,27 +243,73 @@ const paypalWebhook = async (req, res) => {
 			return res.status(200).json({ status: "OK", message: "Subscription activated - awaiting first payment" });
 		}
 
-		// ─── RECURRING SUBSCRIPTION CANCELLED/SUSPENDED/EXPIRED ─────────
-		if (["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.SUSPENDED", "BILLING.SUBSCRIPTION.EXPIRED"].includes(eventType)) {
+		// ─── RECURRING SUBSCRIPTION CANCELLED/EXPIRED ───────────────────
+		if (["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED"].includes(eventType)) {
 			console.log(`[PayPal] Subscription ${eventType}: ${paypalSubId}`);
-
 			const sub = await findByPayPalSubscriptionId(paypalSubId);
 			if (sub) {
 				const meta = sub.installmentMeta || {};
 				await prisma.userSubscription.update({
 					where: { id: sub.id },
 					data: {
+						canceledAt: new Date(),
+						installmentMeta: { ...meta, cancelledAt: new Date().toISOString(), cancelReason: eventType },
+					},
+				});
+				// Access continues until expiresAt (end of current paid month)
+				console.log(`[PayPal] Subscription ${sub.id} cancelled. Access until ${sub.expiresAt}`);
+			}
+			return res.status(200).json({ status: "OK", message: "Cancellation recorded" });
+		}
+
+		// ─── RECURRING SUBSCRIPTION SUSPENDED (payment failures) ────────
+		if (eventType === "BILLING.SUBSCRIPTION.SUSPENDED") {
+			console.log(`[PayPal] Subscription suspended: ${paypalSubId}`);
+			const sub = await findByPayPalSubscriptionId(paypalSubId);
+			if (sub) {
+				const meta = sub.installmentMeta || {};
+				// Add 24-hour grace period from now
+				const graceExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+				// If current expiry is further than grace, keep it; otherwise use grace
+				const newExpiry = sub.expiresAt && new Date(sub.expiresAt) > graceExpiry
+					? sub.expiresAt : graceExpiry;
+
+				await prisma.userSubscription.update({
+					where: { id: sub.id },
+					data: {
+						expiresAt: newExpiry,
 						installmentMeta: {
 							...meta,
-							cancelledAt: new Date().toISOString(),
-							cancelReason: eventType,
+							suspendedAt: new Date().toISOString(),
+							suspendReason: "Payment failures exceeded threshold",
+							graceExpiresAt: graceExpiry.toISOString(),
 						},
 					},
 				});
-				// Don't immediately expire - let current month run out naturally via expiresAt
-				console.log(`[PayPal] Marked subscription ${sub.id} as cancelled. Will expire at ${sub.expiresAt}`);
+				console.log(`[PayPal] Subscription ${sub.id} suspended. Grace until ${graceExpiry.toISOString()}`);
 			}
-			return res.status(200).json({ status: "OK", message: "Cancellation recorded" });
+			return res.status(200).json({ status: "OK", message: "Suspension recorded with grace period" });
+		}
+
+		// ─── RECURRING SUBSCRIPTION RE-ACTIVATED ────────────────────────
+		if (eventType === "BILLING.SUBSCRIPTION.RE-ACTIVATED") {
+			console.log(`[PayPal] Subscription re-activated: ${paypalSubId}`);
+			const sub = await findByPayPalSubscriptionId(paypalSubId);
+			if (sub) {
+				const meta = sub.installmentMeta || {};
+				const now = new Date();
+				await prisma.userSubscription.update({
+					where: { id: sub.id },
+					data: {
+						status: "ACTIVE",
+						canceledAt: null,
+						expiresAt: addMonths(now, 1), // Extend by 1 month from reactivation
+						installmentMeta: { ...meta, reactivatedAt: now.toISOString(), suspendedAt: null },
+					},
+				});
+				console.log(`[PayPal] Subscription ${sub.id} re-activated`);
+			}
+			return res.status(200).json({ status: "OK", message: "Re-activation recorded" });
 		}
 
 		// ─── PAYMENT.SALE.DENIED (recurring payment failed) ────────────

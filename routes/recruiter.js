@@ -248,9 +248,11 @@ Router.post(
 Router.get("/subscriptions/latest", authenticate, recruiterOnly, getRecruiterLatestSubscription);
 
 // PayPal payment initiation
-const { initiatePaypalPayment, cancelPaypalPayment } = require("../payments/paypal/initiatePaypal");
+const { initiatePaypalPayment, cancelPaypalPayment, cancelSubscription, getCancellationInfo } = require("../payments/paypal/initiatePaypal");
 Router.post("/subscriptions/paypal", authenticate, recruiterOnly, initiatePaypalPayment);
 Router.post("/subscriptions/paypal/cancel", authenticate, recruiterOnly, cancelPaypalPayment);
+Router.post("/subscriptions/cancel", authenticate, recruiterOnly, cancelSubscription);
+Router.get("/subscriptions/cancellation-info", authenticate, recruiterOnly, getCancellationInfo);
 Router.get("/subscriptions/upgrade-quote", authenticate, recruiterOnly, getRecruiterUpgradeQuote);
 Router.get("/subscriptions/invoices", authenticate, recruiterOnly, getRecruiterInvoices);
 Router.get("/subscriptions/invoices/:invoiceId", authenticate, recruiterOnly, getRecruiterInvoiceById);

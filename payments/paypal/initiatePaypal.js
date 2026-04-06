@@ -7,13 +7,29 @@
 const { prisma } = require("../../prisma");
 const { createPayPalOrder, createPayPalSubscription } = require("./paypalClient");
 
-// PayPal Subscription Plan IDs (annual/recurring plans from PayPal dashboard)
+// PayPal Subscription Plan IDs (created via API with 12-month commitment)
 const PAYPAL_SUBSCRIPTION_PLANS = {
-	// Job Seeker annual plans
-	"Silver 1-Year": "P-4XN99525DA2986302NHIUNWY",
-	"Gold 1-Year": "P-2NX45334AJ855243SNHIUL7A",
-	"Platinum 1-Year": "P-1YN71190UY690163RNHIUIVY",
+	// Job Seeker annual plans (12 monthly installments, 90-day min commitment)
+	"Silver 1-Year": "P-7V715744K3872590CNHJXR5Y",
+	"Gold 1-Year": "P-2EU77528C2246415VNHJXR5Y",
+	"Platinum 1-Year": "P-0AL26955WW1049333NHJXR5Y",
+	// Recruiter plans
+	"Silver": "P-1VN84546642017043NHJXR6A",       // Monthly $99
+	"Gold": "P-7C3692160Y7422901NHJXR6A",          // Monthly $240
+	"Platinum": "P-2GF592191K636170SNHJXR6I",      // Monthly $350
+	"Diamond": "P-9LW15430FE951712WNHJXR6I",       // Annual $825/mo x 12
 };
+
+// Plans with 90-day minimum commitment (yearly plans)
+const COMMITMENT_PLANS = {
+	"Silver 1-Year": { minDays: 90 },
+	"Gold 1-Year": { minDays: 90 },
+	"Platinum 1-Year": { minDays: 90 },
+	"Diamond": { minDays: 90 },
+};
+
+// Grace period: 1 day (24 hours) after failed payment before features lock
+const GRACE_PERIOD_HOURS = 24;
 
 const addInterval = (startDate, interval) => {
 	const d = new Date(startDate);
@@ -280,4 +296,162 @@ const cancelPaypalPayment = async (req, res) => {
 	}
 };
 
-module.exports = { initiatePaypalPayment, cancelPaypalPayment, PAYPAL_SUBSCRIPTION_PLANS };
+/**
+ * Cancel an active subscription (with 90-day commitment check for yearly plans).
+ * Calls PayPal to cancel the recurring subscription.
+ */
+const cancelSubscription = async (req, res) => {
+	try {
+		const userId = req.user?.userId;
+		if (!userId) return res.status(401).json({ error: true, message: "Unauthorized" });
+
+		const { subscriptionId, reason } = req.body;
+		if (!subscriptionId) return res.status(400).json({ error: true, message: "subscriptionId required" });
+
+		// Find the subscription
+		const sub = await prisma.userSubscription.findFirst({
+			where: { id: subscriptionId, userId, status: "ACTIVE" },
+			select: {
+				id: true, startedAt: true, installmentMeta: true,
+				plan: { select: { name: true } },
+			},
+		});
+
+		if (!sub) {
+			return res.status(404).json({ error: true, message: "Active subscription not found" });
+		}
+
+		// Check 90-day commitment for yearly plans
+		const commitment = COMMITMENT_PLANS[sub.plan?.name];
+		if (commitment && sub.startedAt) {
+			const daysSinceStart = Math.floor((Date.now() - new Date(sub.startedAt).getTime()) / (1000 * 60 * 60 * 24));
+			if (daysSinceStart < commitment.minDays) {
+				const eligibleDate = new Date(sub.startedAt);
+				eligibleDate.setDate(eligibleDate.getDate() + commitment.minDays);
+				return res.status(403).json({
+					error: true,
+					message: `Your plan has a ${commitment.minDays}-day minimum commitment. You can cancel after ${eligibleDate.toLocaleDateString()}.`,
+					result: {
+						minDays: commitment.minDays,
+						daysSoFar: daysSinceStart,
+						eligibleDate: eligibleDate.toISOString(),
+					},
+				});
+			}
+		}
+
+		// Cancel on PayPal if it's a recurring subscription
+		const meta = sub.installmentMeta || {};
+		if (meta.paypalSubscriptionId) {
+			try {
+				const { getAccessToken } = require("./paypalClient");
+				const token = await getAccessToken();
+				const ppRes = await fetch(`https://api-m.paypal.com/v1/billing/subscriptions/${meta.paypalSubscriptionId}/cancel`, {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+					body: JSON.stringify({ reason: reason || "User requested cancellation" }),
+				});
+				if (!ppRes.ok) {
+					console.error("[PayPal Cancel] API error:", await ppRes.text());
+				} else {
+					console.log(`[PayPal Cancel] Subscription ${meta.paypalSubscriptionId} cancelled`);
+				}
+			} catch (err) {
+				console.error("[PayPal Cancel] Error:", err.message);
+			}
+		}
+
+		// Update our subscription - don't expire immediately, let current period run out
+		await prisma.userSubscription.update({
+			where: { id: sub.id },
+			data: {
+				canceledAt: new Date(),
+				installmentMeta: {
+					...meta,
+					cancelledAt: new Date().toISOString(),
+					cancelReason: reason || "User requested cancellation",
+					willExpireAt: sub.installmentMeta?.expiresAt || null,
+				},
+			},
+		});
+
+		console.log(`[Cancel] Subscription ${sub.id} cancelled by user ${userId}. Will expire at current period end.`);
+
+		return res.status(200).json({
+			error: false,
+			message: "Subscription cancelled. Access continues until end of current billing period.",
+			result: { cancelledAt: new Date().toISOString() },
+		});
+	} catch (error) {
+		console.error("[Cancel] Error:", error.message);
+		return res.status(500).json({ error: true, message: error.message });
+	}
+};
+
+/**
+ * Get cancellation eligibility info for a subscription.
+ */
+const getCancellationInfo = async (req, res) => {
+	try {
+		const userId = req.user?.userId;
+		if (!userId) return res.status(401).json({ error: true, message: "Unauthorized" });
+
+		const sub = await prisma.userSubscription.findFirst({
+			where: { userId, status: "ACTIVE" },
+			orderBy: { createdAt: "desc" },
+			select: {
+				id: true, startedAt: true, expiresAt: true, canceledAt: true, installmentMeta: true,
+				plan: { select: { name: true, interval: true } },
+			},
+		});
+
+		if (!sub) {
+			return res.status(404).json({ error: true, message: "No active subscription" });
+		}
+
+		const commitment = COMMITMENT_PLANS[sub.plan?.name];
+		const meta = sub.installmentMeta || {};
+		let canCancel = true;
+		let eligibleDate = null;
+		let daysRemaining = 0;
+
+		if (commitment && sub.startedAt) {
+			const daysSinceStart = Math.floor((Date.now() - new Date(sub.startedAt).getTime()) / (1000 * 60 * 60 * 24));
+			canCancel = daysSinceStart >= commitment.minDays;
+			eligibleDate = new Date(sub.startedAt);
+			eligibleDate.setDate(eligibleDate.getDate() + commitment.minDays);
+			daysRemaining = Math.max(0, commitment.minDays - daysSinceStart);
+		}
+
+		return res.status(200).json({
+			error: false,
+			result: {
+				subscriptionId: sub.id,
+				planName: sub.plan?.name,
+				startedAt: sub.startedAt,
+				expiresAt: sub.expiresAt,
+				isCancelled: !!sub.canceledAt,
+				canCancel,
+				commitmentDays: commitment?.minDays || 0,
+				eligibleDate: eligibleDate?.toISOString() || null,
+				daysUntilCancellable: daysRemaining,
+				installments: meta.type === "INSTALLMENT" ? {
+					paid: meta.paidInstallments || 0,
+					total: meta.totalInstallments || 12,
+				} : null,
+			},
+		});
+	} catch (error) {
+		return res.status(500).json({ error: true, message: error.message });
+	}
+};
+
+module.exports = {
+	initiatePaypalPayment,
+	cancelPaypalPayment,
+	cancelSubscription,
+	getCancellationInfo,
+	PAYPAL_SUBSCRIPTION_PLANS,
+	COMMITMENT_PLANS,
+	GRACE_PERIOD_HOURS,
+};
